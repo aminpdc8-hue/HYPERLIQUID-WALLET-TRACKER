@@ -12,11 +12,9 @@ WALLETS = {
     "WHALE 2": "0xb83de012dba672c76a7dbbbf3e459cb59d7d6e36",
     "WHALE 3": "0x659ddde484fd9dc313917d5de92a52b6a74a9d63",
     "WHALE 4": "0x87f9cd15f5050a9283b8896300f7c8cf69ece2cf",
-    "WHALE 5": "0x45d26f28196d226497130c4bac709d808fed4029",
+    "WHALE 5": "0x1f250Df59A777d61Cb8bd043c12970F3AFE4F925",
     "BobbyBigSize": "0x7fdafde5cfb5465924316eced2d3715494c517d1",
-    "WHALE 7": "0xb695651daa495f59dd2725c6fe98322d8b51a92d",
-    "WHALE 8": "0xdf954bbe619273a56e0cfa90dad8382195dc7d72",
-    "WHALE 9": "0xecb63caa47c7c4e77f60f1ce858cf28dc2b82b00",
+    
     "John Wick": "0xfc27136e42af1732ddc9ce2605ea9bff1b959d9d"
 }
 
