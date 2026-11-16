@@ -2,285 +2,194 @@ import os
 import time
 import requests
 
-# ========== CONFIG ==========
+========== CONFIG ==========
 
-MY_WALLET = "0x1f250Df59A777d61Cb8bd043c12970F3AFE4F925"
-
-WALLETS = {
-    "MY WALLET": MY_WALLET,
-    "WHALE 1": "0x5b5d51203a0f9079f8aeb098a6523a13f298c060",
-    "WHALE 2": "0xb83de012dba672c76a7dbbbf3e459cb59d7d6e36",
-    "WHALE 3": "0x659ddde484fd9dc313917d5de92a52b6a74a9d63",
-    "WHALE 4": "0x87f9cd15f5050a9283b8896300f7c8cf69ece2cf",
-    "WHALE 5": "0x1f250Df59A777d61Cb8bd043c12970F3AFE4F925",
-    "BobbyBigSize": "0x7fdafde5cfb5465924316eced2d3715494c517d1",
-    
-    "John Wick": "0xfc27136e42af1732ddc9ce2605ea9bff1b959d9d"
-}
+WALLET = "0x1f250Df59A777d61Cb8bd043c12970F3AFE4F925"
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
 
 INFO_URL = "https://api.hyperliquid.xyz/info"
 
-MIN_POSITION_USD = 10_000_000
-
 CHECK_INTERVAL = 10
 RUN_SECONDS = 260
 
-session = requests.Session()
+previous_positions = None
 
-
-# ========== TELEGRAM ==========
+========== TELEGRAM ==========
 
 def send_message(message):
+if not BOT_TOKEN or not CHANNEL_ID:
+print("Telegram secrets missing")
+return
 
-    if not BOT_TOKEN or not CHANNEL_ID:
-        print("Telegram secrets missing")
-        return
+url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"  
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+try:  
+    response = requests.post(  
+        url,  
+        json={  
+            "chat_id": CHANNEL_ID,  
+            "text": message  
+        },  
+        timeout=15  
+    )  
+    response.raise_for_status()  
+    print("Telegram message sent")  
 
-    try:
-        response = session.post(
-            url,
-            json={
-                "chat_id": CHANNEL_ID,
-                "text": message
-            },
-            timeout=15
-        )
+except Exception as e:  
+    print("Telegram error:", e)
 
-        response.raise_for_status()
-        print("Telegram message sent")
+========== HYPERLIQUID ==========
 
-    except Exception as e:
-        print("Telegram error:", e)
+def get_positions():
 
+response = requests.post(  
+    INFO_URL,  
+    json={  
+        "type": "clearinghouseState",  
+        "user": WALLET  
+    },  
+    timeout=20  
+)  
 
-# ========== MARKET PRICES ==========
+response.raise_for_status()  
 
-def get_market_prices():
+data = response.json()  
 
-    response = session.post(
-        INFO_URL,
-        json={"type": "metaAndAssetCtxs"},
-        timeout=20
-    )
+positions = {}  
 
-    response.raise_for_status()
+for item in data.get("assetPositions", []):  
 
-    data = response.json()
+    p = item["position"]  
 
-    meta = data[0]
-    contexts = data[1]
+    coin = p["coin"]  
+    size = float(p["szi"])  
 
-    prices = {}
+    if size == 0:  
+        continue  
 
-    for asset, context in zip(meta["universe"], contexts):
+    entry = float(p.get("entryPx") or 0)  
+    pnl = float(p.get("unrealizedPnl") or 0)  
 
-        coin = asset["name"]
-        mark_price = float(context.get("markPx") or 0)
+    positions[coin] = {  
+        "size": size,  
+        "entry": entry,  
+        "pnl": pnl  
+    }  
 
-        if mark_price > 0:
-            prices[coin] = mark_price
+return positions
 
-    return prices
+========== POSITION MONITOR ==========
 
+def notify_changes(old, new):
 
-# ========== POSITIONS ==========
+coins = set(old.keys()) | set(new.keys())  
 
-def get_positions(wallet, prices):
+for coin in coins:  
 
-    response = session.post(
-        INFO_URL,
-        json={
-            "type": "clearinghouseState",
-            "user": wallet
-        },
-        timeout=20
-    )
+    before = old.get(coin)  
+    after = new.get(coin)  
 
-    response.raise_for_status()
+    # OPEN POSITION  
+    if before is None and after is not None:  
 
-    data = response.json()
+        side = "🟢 LONG" if after["size"] > 0 else "🔴 SHORT"  
 
-    positions = {}
+        send_message(  
+            "🐋 HYPERLIQUID WALLET TRACKER\n"  
+            "━━━━━━━━━━━━━━\n"  
+            "🆕 پوزیشن جدید باز شد\n"  
+            f"💎 ارز: {coin}\n"  
+            f"📊 جهت: {side}\n"  
+            f"📦 حجم: {abs(after['size'])}\n"  
+            f"💰 قیمت ورود: {after['entry']}\n"  
+            "━━━━━━━━━━━━━━"  
+        )  
 
-    for item in data.get("assetPositions", []):
+    # CLOSE POSITION  
+    elif before is not None and after is None:  
 
-        p = item["position"]
+        send_message(  
+            "🐋 HYPERLIQUID WALLET TRACKER\n"  
+            "━━━━━━━━━━━━━━\n"  
+            "❌ پوزیشن کاملاً بسته شد\n"  
+            f"💎 ارز: {coin}\n"  
+            f"📦 حجم قبلی: {abs(before['size'])}\n"  
+            f"📊 جهت قبلی: "  
+            f"{'LONG' if before['size'] > 0 else 'SHORT'}\n"  
+            "━━━━━━━━━━━━━━"  
+        )  
 
-        coin = p["coin"]
-        size = float(p["szi"])
+    # POSITION CHANGED  
+    elif before is not None and after is not None:  
 
-        if size == 0:
-            continue
+        old_size = before["size"]  
+        new_size = after["size"]  
 
-        mark_price = prices.get(coin, 0)
+        if old_size * new_size < 0:  
 
-        if mark_price <= 0:
-            print("MARK PRICE MISSING:", coin)
-            continue
+            send_message(  
+                "🐋 HYPERLIQUID WALLET TRACKER\n"  
+                f"🔄 تغییر جهت پوزیشن: {coin}\n"  
+                f"جهت جدید: "  
+                f"{'🟢 LONG' if new_size > 0 else '🔴 SHORT'}\n"  
+                f"حجم جدید: {abs(new_size)}"  
+            )  
 
-        position_value = abs(size) * mark_price
+        elif abs(new_size) > abs(old_size):  
 
-        positions[coin] = {
-            "size": size,
-            "entry": float(p.get("entryPx") or 0),
-            "pnl": float(p.get("unrealizedPnl") or 0),
-            "mark": mark_price,
-            "value": position_value
-        }
+            send_message(  
+                "🐋 HYPERLIQUID WALLET TRACKER\n"  
+                f"📈 افزایش حجم پوزیشن: {coin}\n"  
+                f"حجم قبلی: {abs(old_size)}\n"  
+                f"حجم جدید: {abs(new_size)}"  
+            )  
 
-    return positions
+        elif abs(new_size) < abs(old_size):  
 
-
-# ========== NOTIFICATIONS ==========
-
-def notify_changes(name, wallet, old, current):
-
-    # فقط پوزیشن‌های بالای آستانه
-    qualified = {
-        coin: p for coin, p in current.items()
-        if p["value"] >= MIN_POSITION_USD
-    }
-
-    coins = set(old.keys()) | set(qualified.keys())
-
-    for coin in coins:
-
-        before = old.get(coin)
-        after = qualified.get(coin)
-        raw_after = current.get(coin)
-
-        header = (
-            "🐋 HYPERLIQUID WHALE TRACKER PRO\n"
-            "━━━━━━━━━━━━━━━━\n"
-            f"👑 نهنگ: {name}\n"
-            f"👛 آدرس: {wallet}\n"
-            f"💎 ارز: {coin}\n"
-        )
-
-        # NEW QUALIFIED POSITION
-
-        if before is None and after is not None:
-
-            side = "🟢 LONG" if after["size"] > 0 else "🔴 SHORT"
-
-            send_message(
-                header +
-                "🚨 پوزیشن بالای ۱۰ میلیون دلار شناسایی شد\n"
-                f"📊 جهت: {side}\n"
-                f"📦 حجم: {abs(after['size'])}\n"
-                f"💵 ارزش پوزیشن: ${after['value']:,.0f}\n"
-                f"💰 قیمت ورود: {after['entry']}\n"
-                f"📍 قیمت لحظه‌ای: {after['mark']}\n"
-                "━━━━━━━━━━━━━━━━"
+            send_message(  
+                "🐋 HYPERLIQUID WALLET TRACKER\n"  
+                f"📉 کاهش حجم پوزیشن: {coin}\n"  
+                f"حجم قبلی: {abs(old_size)}\n"  
+                f"حجم جدید: {abs(new_size)}"  
             )
 
-        # CLOSED OR DROPPED BELOW THRESHOLD
+========== MAIN ==========
 
-        elif before is not None and after is None:
+if name == "main":
 
-            if raw_after is None:
+if not BOT_TOKEN or not CHANNEL_ID:  
+    raise ValueError("Telegram secrets missing")  
 
-                status = "❌ پوزیشن کاملاً بسته شد"
+print("HYPERLIQUID WALLET TRACKER STARTING")  
 
-            else:
+previous_positions = get_positions()  
 
-                status = "⚠️ ارزش پوزیشن به زیر ۱۰ میلیون دلار رسید"
+send_message(  
+    "🐋 HYPERLIQUID WALLET TRACKER\n"  
+    "✅ ربات فعال شد\n"  
+    f"👛 آدرس تحت نظر:\n{WALLET}\n"  
+    f"📊 پوزیشن‌های باز فعلی: "  
+    f"{len(previous_positions)}"  
+)  
 
-            send_message(
-                header +
-                status + "\n"
-                f"💵 ارزش قبلی: ${before['value']:,.0f}\n"
-                "━━━━━━━━━━━━━━━━"
-            )
+start_time = time.time()  
 
-        # POSITION CHANGES
+while time.time() - start_time < RUN_SECONDS:  
 
-        elif before is not None and after is not None:
+    try:  
+        current = get_positions()  
 
-            old_size = before["size"]
-            new_size = after["size"]
+        notify_changes(previous_positions, current)  
 
-            if old_size * new_size < 0:
+        previous_positions = current  
 
-                event = "🔄 تغییر جهت پوزیشن"
+        print("Monitoring OK:", len(current), "positions")  
 
-            elif abs(new_size) > abs(old_size):
+    except Exception as e:  
+        print("Monitoring error:", e)  
 
-                event = "📈 افزایش حجم پوزیشن"
+    time.sleep(CHECK_INTERVAL)  
 
-            elif abs(new_size) < abs(old_size):
-
-                event = "📉 کاهش حجم پوزیشن"
-
-            else:
-                continue
-
-            send_message(
-                header +
-                event + "\n"
-                f"📦 حجم قبلی: {abs(old_size)}\n"
-                f"📦 حجم جدید: {abs(new_size)}\n"
-                f"💵 ارزش جدید: ${after['value']:,.0f}\n"
-                f"📊 جهت جدید: "
-                f"{'🟢 LONG' if new_size > 0 else '🔴 SHORT'}\n"
-                "━━━━━━━━━━━━━━━━"
-            )
-
-    return qualified
-
-
-# ========== MAIN ==========
-
-if __name__ == "__main__":
-
-    if not BOT_TOKEN or not CHANNEL_ID:
-        raise ValueError("Telegram secrets missing")
-
-    print("HYPERLIQUID WHALE TRACKER PRO STARTING")
-
-    previous = {}
-    active = {}
-
-    try:
-        prices = get_market_prices()
-    except Exception as e:
-        raise RuntimeError(f"Market price error: {e}")
-
-    # INITIAL SCAN
-
-    for name, wallet in WALLETS.items():
-
-        try:
-
-            positions = get_positions(wallet, prices)
-
-            previous[name] = {
-                coin: p for coin, p in positions.items()
-                if p["value"] >= MIN_POSITION_USD
-            }
-
-            active[name] = wallet
-
-            print(
-                name,
-                "CONNECTED:",
-                len(positions),
-                "positions;",
-                len(previous[name]),
-                "above threshold"
-            )
-
-        except Exception as e:
-
-            print(name, "ERROR:", e)
-
-    send_message(
-        "🐋 HYPERLIQUID WHALE TRACKER PRO\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "✅ سیستم چندنهنگی فعال شد\n"
-        f"👑 کیف
+print("Monitoring cycle finished")
